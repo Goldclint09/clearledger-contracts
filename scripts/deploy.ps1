@@ -62,6 +62,9 @@ Get-Content $envFile | ForEach-Object {
     }
 }
 
+# XLM contracts are experimental and opt-in, matching deploy.sh.
+$deployXlm = ([Environment]::GetEnvironmentVariable('DEPLOY_XLM') -eq 'true')
+
 # ---------------------------------------------------------------------------
 # 1. Address persistence helpers
 # ---------------------------------------------------------------------------
@@ -231,8 +234,8 @@ if (-not $usdcIssuer) {
 }
 
 $xlmAsset = [Environment]::GetEnvironmentVariable('XLM_ASSET')
-if (-not $xlmAsset) {
-    Write-Host "ERROR: XLM_ASSET is not set.  Check your .env file."
+if ($deployXlm -and -not $xlmAsset) {
+    Write-Host "ERROR: XLM_ASSET is not set but DEPLOY_XLM=true.  Check your .env file."
     exit 1
 }
 
@@ -288,17 +291,22 @@ Invoke-Init "escrow_usdc" $escrowUsdcId @("--", "initialize", "--admin", $deploy
 
 Invoke-Init "pool_usdc" $poolUsdcId @("--", "initialize", "--admin", $deployerAddress, "--invoice_contract", $invoiceId, "--escrow_contract", $escrowUsdcId, "--funding_asset", $usdcIssuer, "--registry_contract", $registryId, "--treasury", $deployerAddress, "--min_initial_deposit", "10000000", "--share_name", "`"ClearLedger USDC Pool Shares`"", "--share_symbol", "`"TT-USDC`"", "--share_decimals", "7")
 
-Write-Host "`n=== Deploying XLM escrow_contract (EXPERIMENTAL) ==="
-$escrowXlmId = Deploy-Contract "escrow_xlm" "target/wasm32v1-none/release/clearledger_escrow.wasm"
-Write-Host "XLM Escrow: $escrowXlmId"
+if ($deployXlm) {
+    Write-Host "`n=== Deploying XLM escrow_contract (EXPERIMENTAL) ==="
+    $escrowXlmId = Deploy-Contract "escrow_xlm" "target/wasm32v1-none/release/clearledger_escrow.wasm"
+    Write-Host "XLM Escrow: $escrowXlmId"
 
-Write-Host "`n=== Deploying XLM pool_contract (EXPERIMENTAL) ==="
-$poolXlmId = Deploy-Contract "pool_xlm" "target/wasm32v1-none/release/clearledger_pool.wasm"
-Write-Host "XLM Pool: $poolXlmId"
+    Write-Host "`n=== Deploying XLM pool_contract (EXPERIMENTAL) ==="
+    $poolXlmId = Deploy-Contract "pool_xlm" "target/wasm32v1-none/release/clearledger_pool.wasm"
+    Write-Host "XLM Pool: $poolXlmId"
 
-Invoke-Init "escrow_xlm" $escrowXlmId @("--", "initialize", "--admin", $deployerAddress, "--pool_contract", $poolXlmId, "--usdc_asset", $xlmAsset)
+    Invoke-Init "escrow_xlm" $escrowXlmId @("--", "initialize", "--admin", $deployerAddress, "--pool_contract", $poolXlmId, "--usdc_asset", $xlmAsset)
 
-Invoke-Init "pool_xlm" $poolXlmId @("--", "initialize", "--admin", $deployerAddress, "--invoice_contract", $invoiceId, "--escrow_contract", $escrowXlmId, "--funding_asset", $xlmAsset, "--registry_contract", $registryId, "--treasury", $deployerAddress, "--min_initial_deposit", "10000000", "--share_name", "`"ClearLedger XLM Pool Shares`"", "--share_symbol", "`"TT-XLM`"", "--share_decimals", "7")
+    Invoke-Init "pool_xlm" $poolXlmId @("--", "initialize", "--admin", $deployerAddress, "--invoice_contract", $invoiceId, "--escrow_contract", $escrowXlmId, "--funding_asset", $xlmAsset, "--registry_contract", $registryId, "--treasury", $deployerAddress, "--min_initial_deposit", "10000000", "--share_name", "`"ClearLedger XLM Pool Shares`"", "--share_symbol", "`"TT-XLM`"", "--share_decimals", "7")
+}
+else {
+    Write-Host "`n=== DEPLOY_XLM is not true - skipping experimental XLM contracts ==="
+}
 
 Write-Host "`n=== Wiring USDC pool_contract into invoice_contract ==="
 Invoke-Init "invoice_set_pool" $invoiceId @("--", "set_pool_contract", "--pool_contract", $poolUsdcId)
@@ -314,8 +322,10 @@ Invoke-Init "invoice_set_escrow" $invoiceId @("--", "set_escrow_contract", "--es
 Write-Host "`n=== Allow-listing USDC as a supported funding asset ==="
 Invoke-Init "invoice_add_asset_usdc" $invoiceId @("--", "add_supported_asset", "--asset", $usdcIssuer)
 
-Write-Host "`n=== Allow-listing XLM as a supported funding asset (EXPERIMENTAL) ==="
-Invoke-Init "invoice_add_asset_xlm" $invoiceId @("--", "add_supported_asset", "--asset", $xlmAsset)
+if ($deployXlm) {
+    Write-Host "`n=== Allow-listing XLM as a supported funding asset (EXPERIMENTAL) ==="
+    Invoke-Init "invoice_add_asset_xlm" $invoiceId @("--", "add_supported_asset", "--asset", $xlmAsset)
+}
 
 # Agent-registry wiring is optional: it is only performed when
 # AGENT_REGISTRY_CONTRACT is set in .env / .env.example.  Without it,

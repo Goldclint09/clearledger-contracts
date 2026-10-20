@@ -66,9 +66,7 @@ Test-EnvVar "DEPLOYER_ACCOUNT"
 Test-EnvVar "REGISTRY_CONTRACT_ID"
 Test-EnvVar "INVOICE_CONTRACT_ID"
 Test-EnvVar "POOL_USDC_CONTRACT_ID"
-Test-EnvVar "POOL_XLM_CONTRACT_ID"
 Test-EnvVar "ESCROW_USDC_CONTRACT_ID"
-Test-EnvVar "ESCROW_XLM_CONTRACT_ID"
 
 if ($script:failed) {
     Write-Host "Configuration check failed. Run ./scripts/deploy.ps1 first to populate contract IDs."
@@ -114,14 +112,26 @@ Invoke-VerifyCheck "invoice_contract (get_counts)" @("--id", $invoiceId, "--sour
 # 3. USDC Pool Contract - get_stats
 Invoke-VerifyCheck "pool_usdc_contract (get_stats)" @("--id", $poolUsdcId, "--source", $deployerAccount, "--network", "testnet", "--", "get_stats")
 
-# 4. XLM Pool Contract - get_stats
-Invoke-VerifyCheck "pool_xlm_contract (get_stats)" @("--id", $poolXlmId, "--source", $deployerAccount, "--network", "testnet", "--", "get_stats")
+# 4. XLM Pool Contract - get_stats (only when the experimental XLM pool is deployed)
+if ($poolXlmId) {
+    Invoke-VerifyCheck "pool_xlm_contract (get_stats)" @("--id", $poolXlmId, "--source", $deployerAccount, "--network", "testnet", "--", "get_stats")
+}
+else {
+    Write-Host "Skipping pool_xlm_contract (POOL_XLM_CONTRACT_ID is not set)."
+    Write-Host ""
+}
 
 # 5. USDC Escrow Contract - get_locked (confirm existence with dummy ID)
 Invoke-VerifyCheck "escrow_usdc_contract (get_locked)" @("--id", $escrowUsdcId, "--source", $deployerAccount, "--network", "testnet", "--", "get_locked", "--invoice_id", "0000000000000000000000000000000000000000000000000000000000000000")
 
-# 6. XLM Escrow Contract - get_locked (confirm existence with dummy ID)
-Invoke-VerifyCheck "escrow_xlm_contract (get_locked)" @("--id", $escrowXlmId, "--source", $deployerAccount, "--network", "testnet", "--", "get_locked", "--invoice_id", "0000000000000000000000000000000000000000000000000000000000000000")
+# 6. XLM Escrow Contract - get_locked (only when the experimental XLM escrow is deployed)
+if ($escrowXlmId) {
+    Invoke-VerifyCheck "escrow_xlm_contract (get_locked)" @("--id", $escrowXlmId, "--source", $deployerAccount, "--network", "testnet", "--", "get_locked", "--invoice_id", "0000000000000000000000000000000000000000000000000000000000000000")
+}
+else {
+    Write-Host "Skipping escrow_xlm_contract (ESCROW_XLM_CONTRACT_ID is not set)."
+    Write-Host ""
+}
 
 if ($script:failed) {
     Write-Host "Verification failed."

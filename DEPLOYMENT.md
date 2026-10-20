@@ -23,8 +23,8 @@ Copy `.env.example` to `.env` and fill in:
 | Variable | Description |
 |----------|-------------|
 | `DEPLOYER_ACCOUNT` | Key alias for the deployer (default: `deployer`) |
-| `USDC_ISSUER` | Stellar address of the USDC issuer on testnet |
-| `XLM_ASSET` | XLM asset contract address (or native) - EXPERIMENTAL/INCOMPLETE |
+| `USDC_ISSUER` | Stellar Asset Contract (SAC) address for USDC on testnet (`C...`). Despite the name, the scripts pass this value directly as both `--usdc_asset` and `--funding_asset`, so it must be the token contract address, **not** the `G...` issuer account |
+| `XLM_ASSET` | XLM SAC address - EXPERIMENTAL/INCOMPLETE |
 | `DEPLOY_XLM` | Set to `true` to opt in to experimental XLM contracts; defaults to the supported USDC workflow |
 
 ## Testnet Deployment
@@ -120,7 +120,7 @@ because each contract references others:
 
 9. Allow-list funding assets
    └─ invoice.add_supported_asset(usdc)
-   └─ invoice.add_supported_asset(xlm)
+   └─ invoice.add_supported_asset(xlm) [only when DEPLOY_XLM=true]
    Without this, `create` rejects every invoice with `UnsupportedAsset`.
 
 10. Wire agent registry (optional — skipped when `AGENT_REGISTRY_CONTRACT`
@@ -130,8 +130,11 @@ because each contract references others:
     can never unlock.
 ```
 
-The registry must be deployed first because all other contracts
-call `is_verified()` on it during initialization.
+The registry is deployed first so that the invoice and pool constructors can
+store its address. Initialization itself does not call `is_verified()`: the
+invoice calls the registry on `create`/`list_for_financing`, and the pool calls
+it during `fund_invoice`. The registry must still be live before any invoice is
+created or funded.
 
 ## Multi-sig Admin
 
@@ -145,6 +148,13 @@ to each `initialize()` call. Keep the individual signer secret keys separate.
 The bundled deployment scripts currently set admin to the deployer's address;
 for a multisig deployment, initialize each contract with the multisig address
 and submit those initialization transactions with the multisig threshold met.
+Each contract initializes with only the incoming admin's signature, so the
+multisig account must authorize its own initialization call.
+
+The same admin controls pause/unpause on registry, invoice, escrow, and pool,
+and can immediately call `upgrade` on the invoice and escrow contracts. There
+is no on-chain timelock, so the multisig threshold is the only delay/approval
+mechanism for those actions.
 
 ### Testnet Example: 3-of-5
 
@@ -197,17 +207,35 @@ To wire it manually (or re-wire it after rotating the agent registry):
 This step is only required if agent-attested invoice submission is used;
 skip it otherwise.
 
+## Upgrades
+
+The invoice and escrow contracts expose an admin-only
+`upgrade(new_wasm_hash)` entry point. Install the new Wasm on the network, then
+call `upgrade` from the stored admin. The contract address and storage stay the
+same. The call is **not** pause-guarded and has no timelock.
+
+- Registry, pool, and pool factory have no upgrade entry point. Changing them
+  means deploying new contracts and re-wiring invoice/pool references.
+- After an upgrade, re-run `scripts/verify.sh` (or `verify.ps1`) and confirm
+  the admin, wiring, and asset allow-list are still what you expect.
+- Protect the admin with a multisig before using `upgrade` on any non-test
+  deployment. See [Multi-sig Admin](#multi-sig-admin).
+
 ## Mainnet Deployment
 
-Mainnet deployment is not yet supported. Before mainnet:
+**Mainnet deployment is not supported.** The contracts are unaudited and this
+repository only deploys to Stellar Testnet; the scripts hard-code
+`--network testnet`. Do not treat any address produced by these scripts as a
+Mainnet-ready deployment.
+
+Before Mainnet could be considered, at minimum:
 
 - [ ] Admin configured as a multi-sig account (see [Multi-sig Admin](#multi-sig-admin))
-- [ ] Emergency pause mechanism implemented
-- [ ] Security audit completed
+- [ ] Upgrade/pause runbooks and timelock or governance reviewed
+- [ ] `set_max_utilization` stored-admin check fixed
 - [ ] Issuer release wiring (Issue #56) resolved
-
-When mainnet support is added, the same `deploy.sh` script
-will work with `--network public` by updating `.env`.
+- [ ] Security audit completed
+- [ ] Funding-asset SAC address and token-behaviour assumptions verified
 
 ## Contract Verification
 
@@ -223,11 +251,12 @@ Or on Windows (PowerShell):
 powershell ./scripts/verify.ps1
 ```
 
-This checks each contract responds to a read-only query
+This checks each deployed contract responds to a read-only query
 (`get_admin`, `get_counts`, `get_stats`, `get_locked`) and that the
 invoice contract's post-deploy wiring is in place
 (`get_escrow_contract`, `get_agent_registry_contract`,
-`is_supported_asset`).
+`is_supported_asset`). XLM checks run only when the experimental XLM contract
+IDs are present, so a USDC-only deployment can verify without them.
 
 You can also verify on [Stellar Expert Testnet](https://stellar.expert/explorer/testnet).
 
@@ -276,11 +305,22 @@ The old contract addresses will still exist on-chain but are
 no longer referenced by the application.
 
 To manually invalidate old deployments:
-1. Revoke all verified issuers/buyers from the old registry
-2. Pause LP deposits on old pool contracts (when pause is implemented)
-3. Deploy new contracts with `--fresh`
-4. Update `clearledger-app/.env.local` with new addresses
-5. Notify LPs to withdraw from old pools and deposit into new ones
+
+1. Deploy new contracts with `--fresh` and verify them.
+2. Update `clearledger-app/.env.local` with the new addresses.
+3. Revoke verified profiles on the old registry if it must stop accepting new
+   invoices.
+4. Give LPs a withdrawal window from the old pool **before** pausing it.
+   Pause blocks `withdraw`, `repay`, `repay_partial`, `repay_early`, and
+   default settlement, so a paused pool cannot be used for orderly exits.
+5. Use `pause()` on the old pool/invoice/escrow only as an emergency freeze.
+   Because `fund_invoice` is permissionless, there is no way to stop new
+   funding on an unpaused pool except pausing it or setting
+   `max_utilization_bps` to `0`. Pausing and withdrawals are mutually
+   exclusive; coordinate unpause windows for repayments and exits.
+6. Old addresses remain on-chain. Anyone can still call permissionless
+   functions such as `fund_invoice` and `trigger_default` on them until the
+   old pool is paused or drained.
 
 ## Troubleshooting
 
