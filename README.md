@@ -55,6 +55,8 @@ cargo test --workspace
 cargo build --workspace --release --target wasm32v1-none
 ```
 
+See [Building and inspecting WASM artifacts](docs/developer-guide/wasm-artifacts.md) for artifact paths, local and on-chain hash comparison, contract spec inspection, test execution, and troubleshooting.
+
 For a fresh testnet deployment, configure `.env` using `.env.example`, fund a testnet deployer, then run:
 
 ```bash
